@@ -1,5 +1,8 @@
 # Harmonia
 
+[![uses nix](https://img.shields.io/badge/uses-nix-%237EBAE4)](https://nixos.org/)
+![rust](https://img.shields.io/badge/Rust-1.95%2B-orange.svg)
+
 Poly-repo orchestrator for coordinating work across multiple repositories.
 
 ## What works today
