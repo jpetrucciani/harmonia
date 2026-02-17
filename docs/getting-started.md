@@ -34,6 +34,7 @@ cp config.example.toml .harmonia/config.toml
 Then edit `.harmonia/config.toml`:
 
 - Set your repo names under `[repos]`
+- Set `[repos].<name>.ecosystem` (`rust`, `python`, `node`, `go`, `java`, or custom)
 - Add explicit `url` values or configure `[forge].default_group` and `[defaults].clone_protocol`
 - Optionally set default `[groups]`
 - Optionally declare repo-level dependency order with `[repos].<name>.depends_on`

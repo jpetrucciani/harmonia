@@ -149,8 +149,8 @@ repos_dir = "repos"
 type = "github"
 
 [repos]
-"core" = { package_name = "core-pkg" }
-"app" = { url = "file:///abs/path/to/app.git", depends_on = ["core"] }
+"core" = { package_name = "core-pkg", ecosystem = "rust" }
+"app" = { url = "file:///abs/path/to/app.git", ecosystem = "python", depends_on = ["core"] }
 
 [groups]
 core = ["core", "app"]
@@ -170,13 +170,16 @@ pre_push = "harmonia lint --changed"
 Workspace-level dependency edges can be declared directly in `[repos].<name>.depends_on`.
 This controls graph order and merge planning without requiring per-repo config files.
 
+Set `[repos].<name>.ecosystem` to drive default parsing for `graph deps`, `version`, and
+`deps` commands even when `<repo>/.harmonia.toml` is absent.
+
 Example:
 
 ```toml
 [repos]
-"core" = { package_name = "core-pkg" }
-"lib" = { depends_on = ["core"] }          # by repo key
-"api" = { depends_on = ["core-pkg", "lib"] } # by package name or repo key
+"core" = { package_name = "core-pkg", ecosystem = "rust" }
+"lib" = { ecosystem = "rust", depends_on = ["core"] }             # by repo key
+"api" = { ecosystem = "python", depends_on = ["core-pkg", "lib"] } # by package name or repo key
 ```
 
 Inspect the resulting order with:

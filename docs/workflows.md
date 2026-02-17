@@ -82,3 +82,6 @@ harmonia deps update --dry-run
 ```
 
 Use `--dry-run` before applying bulk updates in active branches.
+
+For default version/dependency parsing, set `[repos].<name>.ecosystem` in workspace config
+or `<repo>/.harmonia.toml` package metadata.

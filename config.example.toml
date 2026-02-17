@@ -14,11 +14,12 @@ type = "github"
 
 [repos]
 # Minimal repo entry, URL resolved from forge.default_group + defaults.clone_protocol.
-"shared-lib" = { package_name = "shared-lib" }
+# ecosystem drives default version/dependency parsing for version/deps commands.
+"shared-lib" = { package_name = "shared-lib", ecosystem = "rust" }
 
 # Explicit URLs. For local repos, file:// URLs also work.
-"service-a" = { url = "file:///ABSOLUTE/PATH/TO/service-a.git", depends_on = ["shared-lib"] }
-"service-b" = { url = "file:///ABSOLUTE/PATH/TO/service-b.git", depends_on = ["shared-lib", "service-a"] }
+"service-a" = { url = "file:///ABSOLUTE/PATH/TO/service-a.git", ecosystem = "python", depends_on = ["shared-lib"] }
+"service-b" = { url = "file:///ABSOLUTE/PATH/TO/service-b.git", ecosystem = "python", depends_on = ["shared-lib", "service-a"] }
 
 # depends_on accepts repo keys and package names. These edges drive graph and merge order.
 # "service-c" = { depends_on = ["shared-lib", "service-a"] }

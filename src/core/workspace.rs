@@ -96,6 +96,16 @@ fn validate_workspace_config(config: &WorkspaceConfig) -> Result<(), ConfigError
                 repo
             )));
         }
+        if entry
+            .ecosystem
+            .as_deref()
+            .is_some_and(|ecosystem| ecosystem.trim().is_empty())
+        {
+            return Err(ConfigError::Validation(format!(
+                "repo '{}' has empty ecosystem value",
+                repo
+            )));
+        }
     }
 
     Ok(())
@@ -140,11 +150,17 @@ fn build_repos(
                     .and_then(|pkg| pkg.name.clone())
             })
             .or_else(|| Some(repo_key.clone()));
-        let ecosystem = repo_config
+        let ecosystem = entry
+            .ecosystem
             .as_ref()
-            .and_then(|cfg| cfg.package.as_ref())
-            .and_then(|pkg| pkg.ecosystem.as_ref())
-            .and_then(|value| parse_ecosystem(value.as_str()));
+            .and_then(|value| parse_ecosystem(value.as_str()))
+            .or_else(|| {
+                repo_config
+                    .as_ref()
+                    .and_then(|cfg| cfg.package.as_ref())
+                    .and_then(|pkg| pkg.ecosystem.as_ref())
+                    .and_then(|value| parse_ecosystem(value.as_str()))
+            });
 
         let repo = Repo {
             id: repo_id.clone(),
@@ -206,8 +222,23 @@ fn default_host_for_forge(forge_type: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use crate::config::{MrConfig, RepoEntry, WorkspaceConfig};
-    use crate::core::workspace::validate_workspace_config;
+    use crate::core::repo::RepoId;
+    use crate::core::workspace::{build_repos, validate_workspace_config};
+    use crate::ecosystem::EcosystemId;
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let pid = std::process::id();
+        std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}"))
+    }
 
     #[test]
     fn rejects_invalid_link_strategy() {
@@ -237,5 +268,72 @@ mod tests {
 
         let err = validate_workspace_config(&config).expect_err("should reject config");
         assert!(format!("{}", err).contains("external=true and ignored=true"));
+    }
+
+    #[test]
+    fn rejects_empty_repo_ecosystem() {
+        let mut config = WorkspaceConfig::default();
+        config.repos.insert(
+            "svc".to_string(),
+            RepoEntry {
+                ecosystem: Some("   ".to_string()),
+                ..RepoEntry::default()
+            },
+        );
+
+        let err = validate_workspace_config(&config).expect_err("should reject config");
+        assert!(format!("{}", err).contains("empty ecosystem value"));
+    }
+
+    #[test]
+    fn build_repos_uses_workspace_repo_ecosystem_when_present() {
+        let root = unique_temp_dir("workspace-ecosystem");
+        let repo_path = root.join("repos").join("svc");
+        fs::create_dir_all(&repo_path).expect("create repo dir");
+        fs::write(
+            repo_path.join(".harmonia.toml"),
+            "[package]\nname = \"svc\"\necosystem = \"python\"\n",
+        )
+        .expect("write repo config");
+
+        let mut config = WorkspaceConfig::default();
+        config.repos.insert(
+            "svc".to_string(),
+            RepoEntry {
+                ecosystem: Some("rust".to_string()),
+                ..RepoEntry::default()
+            },
+        );
+
+        let repos = build_repos(&root, &config).expect("build repos");
+        let repo = repos
+            .get(&RepoId::new("svc".to_string()))
+            .expect("repo exists");
+        assert_eq!(repo.ecosystem, Some(EcosystemId::Rust));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_repos_falls_back_to_repo_config_ecosystem() {
+        let root = unique_temp_dir("repo-config-ecosystem");
+        let repo_path = root.join("repos").join("svc");
+        fs::create_dir_all(&repo_path).expect("create repo dir");
+        fs::write(
+            repo_path.join(".harmonia.toml"),
+            "[package]\nname = \"svc\"\necosystem = \"python\"\n",
+        )
+        .expect("write repo config");
+
+        let mut config = WorkspaceConfig::default();
+        config.repos.insert("svc".to_string(), RepoEntry::default());
+
+        let repos = build_repos(&root, &config).expect("build repos");
+        let repo = repos
+            .get(&RepoId::new("svc".to_string()))
+            .expect("repo exists");
+        assert_eq!(repo.ecosystem, Some(EcosystemId::Python));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

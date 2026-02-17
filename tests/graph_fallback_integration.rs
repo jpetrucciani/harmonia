@@ -20,8 +20,8 @@ name = "graph-fallback-integration"
 repos_dir = "repos"
 
 [repos]
-"core" = {}
-"app" = {}
+"core" = { ecosystem = "rust" }
+"app" = { ecosystem = "rust" }
 "#,
         )
         .expect("write workspace config");
@@ -57,13 +57,6 @@ repos_dir = "repos"
             format!("pub fn name() -> &'static str {{ \"{name}\" }}\n"),
         )
         .expect("write src/lib.rs");
-        // Intentionally omit [dependencies] config to verify fallback to ecosystem defaults.
-        fs::write(
-            repo_path.join(".harmonia.toml"),
-            format!("[package]\nname = \"{name}\"\necosystem = \"rust\"\n"),
-        )
-        .expect("write .harmonia.toml");
-
         init_git_repo(&repo_path);
     }
 
@@ -84,10 +77,30 @@ impl Drop for TestWorkspace {
 }
 
 fn harmonia_bin() -> PathBuf {
-    PathBuf::from(
-        std::env::var("CARGO_BIN_EXE_harmonia")
-            .expect("CARGO_BIN_EXE_harmonia is not set for integration test"),
-    )
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_harmonia") {
+        return PathBuf::from(path);
+    }
+
+    let current_exe = std::env::current_exe().expect("resolve current test binary path");
+    let target_dir = current_exe
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("derive cargo target dir from test binary path");
+    let bin_name = if cfg!(windows) {
+        "harmonia.exe"
+    } else {
+        "harmonia"
+    };
+    let fallback = target_dir.join(bin_name);
+
+    if fallback.is_file() {
+        fallback
+    } else {
+        panic!(
+            "CARGO_BIN_EXE_harmonia is not set and fallback binary not found at {}",
+            fallback.display()
+        );
+    }
 }
 
 fn init_git_repo(repo_path: &Path) {
@@ -140,4 +153,43 @@ fn graph_deps_uses_ecosystem_default_dependency_file_when_not_configured() {
 
     let deps: Vec<String> = serde_json::from_slice(&output.stdout).expect("parse json deps");
     assert_eq!(deps, vec!["core"]);
+}
+
+#[test]
+fn version_show_uses_workspace_repo_ecosystem_without_repo_config() {
+    let workspace = TestWorkspace::new();
+    let output = workspace.run_harmonia(&["version", "show", "--json"]);
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        output.status.success(),
+        "version show failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+
+    let entries: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse version show json");
+    let rows = entries.as_array().expect("entries should be array");
+
+    let core = rows
+        .iter()
+        .find(|row| row.get("repo").and_then(serde_json::Value::as_str) == Some("core"))
+        .expect("core row exists");
+    let app = rows
+        .iter()
+        .find(|row| row.get("repo").and_then(serde_json::Value::as_str) == Some("app"))
+        .expect("app row exists");
+
+    assert_eq!(
+        core.get("version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+        "0.1.0"
+    );
+    assert_eq!(
+        app.get("version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+        "0.1.0"
+    );
 }

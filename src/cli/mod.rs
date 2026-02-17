@@ -783,6 +783,11 @@ pub struct RepoAddArgs {
         help = "Internal package name used in dependency mapping."
     )]
     pub package_name: Option<String>,
+    #[arg(
+        long,
+        help = "Ecosystem id used for version/deps defaults (rust, python, node, go, java, custom)."
+    )]
+    pub ecosystem: Option<String>,
     #[arg(long, help = "Mark repository as external to the workspace.")]
     pub external: bool,
     #[arg(long, help = "Mark repository as ignored by orchestration commands.")]
@@ -2471,6 +2476,7 @@ fn handle_repo_show(config_path: &Path, args: RepoShowArgs) -> Result<()> {
     let url = entry.get("url").and_then(|value| value.as_str());
     let default_branch = entry.get("default_branch").and_then(|value| value.as_str());
     let package_name = entry.get("package_name").and_then(|value| value.as_str());
+    let ecosystem = entry.get("ecosystem").and_then(|value| value.as_str());
     let external = entry
         .get("external")
         .and_then(|value| value.as_bool())
@@ -2487,6 +2493,10 @@ fn handle_repo_show(config_path: &Path, args: RepoShowArgs) -> Result<()> {
         default_branch.unwrap_or("(workspace default)")
     );
     println!("  package_name: {}", package_name.unwrap_or("(repo name)"));
+    println!(
+        "  ecosystem: {}",
+        ecosystem.unwrap_or("(repo config/default)")
+    );
     println!("  external: {}", external);
     println!("  ignored: {}", ignored);
     Ok(())
@@ -2524,6 +2534,18 @@ fn handle_repo_add(config_path: &Path, args: RepoAddArgs) -> Result<()> {
         entry.insert(
             "package_name".to_string(),
             toml::Value::String(package_name),
+        );
+    }
+    if let Some(ecosystem) = args.ecosystem {
+        let ecosystem = ecosystem.trim();
+        if ecosystem.is_empty() {
+            return Err(HarmoniaError::Other(anyhow::anyhow!(
+                "--ecosystem cannot be empty"
+            )));
+        }
+        entry.insert(
+            "ecosystem".to_string(),
+            toml::Value::String(ecosystem.to_string()),
         );
     }
     if args.external {

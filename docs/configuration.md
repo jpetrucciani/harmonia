@@ -19,8 +19,8 @@ type = "github"
 # token = "" # prefer HARMONIA_FORGE_TOKEN
 
 [repos]
-"core" = { package_name = "core-pkg" }
-"app" = { url = "file:///abs/path/to/app.git", depends_on = ["core"] }
+"core" = { package_name = "core-pkg", ecosystem = "rust" }
+"app" = { url = "file:///abs/path/to/app.git", ecosystem = "python", depends_on = ["core"] }
 "vendor-sdk" = { url = "file:///abs/path/to/vendor-sdk.git", external = true }
 "scratch" = { url = "file:///abs/path/to/scratch.git", ignored = true }
 
@@ -73,9 +73,9 @@ repo-level config files.
 
 ```toml
 [repos]
-"core" = { package_name = "core-pkg" }
-"lib" = { depends_on = ["core"] }                # by repo key
-"api" = { depends_on = ["core-pkg", "lib"] }     # by package name or repo key
+"core" = { package_name = "core-pkg", ecosystem = "rust" }
+"lib" = { ecosystem = "rust", depends_on = ["core"] }                # by repo key
+"api" = { ecosystem = "python", depends_on = ["core-pkg", "lib"] }   # by package name or repo key
 ```
 
 Use these commands to verify the resolved order:
@@ -84,6 +84,14 @@ Use these commands to verify the resolved order:
 harmonia graph order
 harmonia plan
 ```
+
+### Workspace Ecosystem Declarations
+
+Set `[repos].<name>.ecosystem` when you want workspace config to define repo type
+for default `graph deps`, `version`, and `deps` behavior.
+
+This is useful when repos do not have `<repo>/.harmonia.toml` package metadata.
+If both workspace and repo config set ecosystem, workspace `[repos]` entry wins.
 
 ## Repo Config
 

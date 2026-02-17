@@ -63,10 +63,30 @@ impl Drop for TestWorkspace {
 }
 
 fn harmonia_bin() -> PathBuf {
-    PathBuf::from(
-        std::env::var("CARGO_BIN_EXE_harmonia")
-            .expect("CARGO_BIN_EXE_harmonia is not set for integration test"),
-    )
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_harmonia") {
+        return PathBuf::from(path);
+    }
+
+    let current_exe = std::env::current_exe().expect("resolve current test binary path");
+    let target_dir = current_exe
+        .parent()
+        .and_then(|path| path.parent())
+        .expect("derive cargo target dir from test binary path");
+    let bin_name = if cfg!(windows) {
+        "harmonia.exe"
+    } else {
+        "harmonia"
+    };
+    let fallback = target_dir.join(bin_name);
+
+    if fallback.is_file() {
+        fallback
+    } else {
+        panic!(
+            "CARGO_BIN_EXE_harmonia is not set and fallback binary not found at {}",
+            fallback.display()
+        );
+    }
 }
 
 fn init_git_repo(repo_path: &Path) {
@@ -150,6 +170,8 @@ fn repo_command_add_list_show_remove() {
         "api",
         "--url",
         "https://example.com/api.git",
+        "--ecosystem",
+        "python",
         "--group",
         "core",
         "--external",
@@ -174,6 +196,10 @@ fn repo_command_add_list_show_remove() {
         show_stdout.contains("external: true"),
         "stdout:\n{show_stdout}"
     );
+    assert!(
+        show_stdout.contains("ecosystem: python"),
+        "stdout:\n{show_stdout}"
+    );
 
     let remove_output = workspace.run_harmonia(&["repo", "remove", "api"]);
     assert_success(&remove_output, "repo remove");
@@ -190,6 +216,23 @@ fn repo_command_add_list_show_remove() {
     assert!(
         !config_contents.contains("\"api\""),
         "config still contains removed repo:\n{config_contents}"
+    );
+}
+
+#[test]
+fn repo_add_rejects_empty_ecosystem() {
+    let workspace = TestWorkspace::new();
+
+    let add_output = workspace.run_harmonia(&["repo", "add", "api", "--ecosystem", "   "]);
+    let stdout = String::from_utf8_lossy(&add_output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&add_output.stderr).to_string();
+    assert!(
+        !add_output.status.success(),
+        "repo add should fail for empty ecosystem\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--ecosystem cannot be empty"),
+        "stderr:\n{stderr}"
     );
 }
 
