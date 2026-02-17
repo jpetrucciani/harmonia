@@ -135,6 +135,10 @@ fn assert_success(output: &std::process::Output, context: &str) {
     );
 }
 
+fn normalize_separators(value: &str) -> String {
+    value.replace('\\', "/")
+}
+
 #[test]
 fn config_command_get_set_show_and_edit() {
     let workspace = TestWorkspace::new();
@@ -243,7 +247,7 @@ fn edit_command_uses_editor_with_selected_paths() {
 
     let explicit_output = workspace.run_harmonia(&["edit", "service", "--editor", "echo"]);
     assert_success(&explicit_output, "edit service");
-    let explicit_stdout = String::from_utf8_lossy(&explicit_output.stdout).to_string();
+    let explicit_stdout = normalize_separators(&String::from_utf8_lossy(&explicit_output.stdout));
     assert!(
         explicit_stdout.contains("repos/service"),
         "stdout:\n{explicit_stdout}"
@@ -251,7 +255,7 @@ fn edit_command_uses_editor_with_selected_paths() {
 
     let changed_output = workspace.run_harmonia(&["edit", "--all", "--editor", "echo"]);
     assert_success(&changed_output, "edit --all");
-    let changed_stdout = String::from_utf8_lossy(&changed_output.stdout).to_string();
+    let changed_stdout = normalize_separators(&String::from_utf8_lossy(&changed_output.stdout));
     assert!(
         changed_stdout.contains("repos/service"),
         "stdout:\n{changed_stdout}"
