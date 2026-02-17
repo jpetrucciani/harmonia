@@ -195,7 +195,7 @@ fn test_all_excludes_external_and_ignored_repos() {
     let workspace = TestWorkspace::new();
     workspace.clear_selection_log();
 
-    let output = workspace.run_harmonia(&["test", "--all"]);
+    let output = workspace.run_harmonia(&["test", "--all", "--parallel", "1"]);
     assert_success(&output, "test --all");
     assert_eq!(
         workspace.read_selection_log(),
@@ -209,7 +209,7 @@ fn test_changed_targets_only_changed_repos() {
     workspace.mark_repo_changed("app");
     workspace.clear_selection_log();
 
-    let output = workspace.run_harmonia(&["test", "--changed"]);
+    let output = workspace.run_harmonia(&["test", "--changed", "--parallel", "1"]);
     assert_success(&output, "test --changed");
     assert_eq!(workspace.read_selection_log(), vec!["app".to_string()]);
 }
@@ -220,7 +220,7 @@ fn lint_changed_targets_only_changed_repos() {
     workspace.mark_repo_changed("app");
     workspace.clear_selection_log();
 
-    let output = workspace.run_harmonia(&["lint", "--changed"]);
+    let output = workspace.run_harmonia(&["lint", "--changed", "--parallel", "1"]);
     assert_success(&output, "lint --changed");
     assert_eq!(workspace.read_selection_log(), vec!["app".to_string()]);
 }
