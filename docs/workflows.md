@@ -1,6 +1,24 @@
 # Core Workflows
 
-## 1. Feature Across Multiple Repos
+## 1. Default Loop (Fastest)
+
+```bash
+# reset local repos to main/master and fast-forward
+harmonia refresh
+
+# edit files, then submit in one command
+harmonia submit
+# or with explicit message:
+harmonia submit -m "feat: auth flow"
+
+# after merge, refresh again
+harmonia refresh
+```
+
+`submit` runs: `mr create` (auto-branch by default), `add`, `commit -m`, `push -u`.
+If you do not pass `-m/--message`, commit message defaults to `updates`.
+
+## 2. Feature Across Multiple Repos (Manual)
 
 ```bash
 # sync and start feature branches
@@ -26,7 +44,7 @@ harmonia mr create --title "feat: auth flow"
 If your workspace uses `[repos].<name>.depends_on`, graph-order commands and
 planning honor those declarations in addition to manifest-parsed dependencies.
 
-## 2. Single-Repo Hotfix
+## 3. Single-Repo Hotfix
 
 ```bash
 harmonia branch hotfix/critical --create --repos api
@@ -37,7 +55,7 @@ harmonia push --repos api --set-upstream
 harmonia mr create --title "fix: critical bug"
 ```
 
-## 3. Hook-Driven Team Policy
+## 4. Hook-Driven Team Policy
 
 Define workspace hooks once:
 
@@ -54,7 +72,7 @@ Repo-level opt-out for specific hooks:
 disable_workspace_hooks = ["pre_push"]
 ```
 
-## 4. Version and Internal Dependency Updates
+## 5. Version and Internal Dependency Updates
 
 ```bash
 harmonia version check

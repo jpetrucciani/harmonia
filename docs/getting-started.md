@@ -42,12 +42,26 @@ Then edit `.harmonia/config.toml`:
 
 ```bash
 harmonia clone --all
-harmonia sync --autostash
+harmonia refresh
 harmonia status --long
 harmonia graph show --format=tree
 ```
 
 ## First Change Flow
+
+```bash
+# implement changes first, then:
+harmonia submit
+# optional message override:
+harmonia submit -m "feat: example"
+
+# after merge, reset and update everything:
+harmonia refresh
+```
+
+`submit` defaults commit message to `updates` when `-m/--message` is not provided.
+
+Manual flow (if you want explicit per-step control):
 
 ```bash
 harmonia branch feature/example --create --repos app --with-all-deps

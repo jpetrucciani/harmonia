@@ -46,6 +46,17 @@ harmonia mr merge --yes
 harmonia mr close --yes
 ```
 
+For a one-command default flow, use:
+
+```bash
+harmonia submit
+# optional message override:
+harmonia submit -m "feat: auth flow"
+```
+
+`submit` runs: `mr create`, `add`, `commit -m`, `push -u`.
+Default commit message is `updates` when `--message` is not provided.
+
 ## Useful MR Config Fields
 
 ```toml

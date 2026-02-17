@@ -83,6 +83,10 @@ pub enum Commands {
         long_about = "Fetch and integrate upstream changes across selected repos.\n\nDefault behavior:\n  - fetch from the repository's configured upstream remote\n  - if the current branch can fast-forward, advance it\n  - if histories diverged, create a merge commit with --no-edit\n  - if already up to date, leave the branch unchanged\n\nSafety behavior:\n  - by default, branch updates require a clean working tree\n  - use --autostash to stash local changes before updating and re-apply them after\n  - use --fetch-only to only fetch remote updates without changing local branches"
     )]
     Sync(SyncArgs),
+    #[command(about = "Switch all repos back to main/master and fast-forward from upstream.")]
+    Refresh(RefreshArgs),
+    #[command(about = "Create MRs, stage, commit, and push changed repos in one command.")]
+    Submit(SubmitArgs),
     #[command(about = "Run an arbitrary command in each selected repository.")]
     Exec(ExecArgs),
     #[command(about = "Run a configured hook across selected repositories.")]
@@ -225,6 +229,26 @@ pub struct SyncArgs {
     pub prune: bool,
     #[arg(long, help = "Number of repositories to sync in parallel.")]
     pub parallel: Option<usize>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct RefreshArgs;
+
+#[derive(Args, Debug, Default)]
+pub struct SubmitArgs {
+    #[arg(
+        short = 'm',
+        long,
+        help = "Commit message for submit flow. Defaults to 'updates'."
+    )]
+    pub message: Option<String>,
+    #[arg(
+        long,
+        help = "Disable auto-branching before MR creation in submit flow."
+    )]
+    pub no_auto_branch: bool,
+    #[arg(long, help = "Branch name to use for auto-branching in submit flow.")]
+    pub branch_name: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -938,6 +962,8 @@ fn dispatch(cli: Cli) -> Result<()> {
         Commands::Clone(args) => handle_clone(args, cli.workspace, cli.config),
         Commands::Status(args) => handle_status(args, cli.workspace, cli.config),
         Commands::Sync(args) => handle_sync(args, cli.workspace, cli.config),
+        Commands::Refresh(args) => handle_refresh(args, cli.workspace, cli.config),
+        Commands::Submit(args) => handle_submit(args, cli.workspace, cli.config),
         Commands::Exec(args) => handle_exec(args, cli.workspace, cli.config),
         Commands::Run(args) => handle_run(args, cli.workspace, cli.config),
         Commands::Each(args) => handle_each(args, cli.workspace, cli.config),
@@ -1388,6 +1414,110 @@ fn handle_sync(
     Ok(())
 }
 
+fn handle_refresh(
+    _args: RefreshArgs,
+    workspace_root: Option<PathBuf>,
+    config_path: Option<PathBuf>,
+) -> Result<()> {
+    output::info("refresh: checking out main/master across repositories");
+    handle_checkout(
+        CheckoutArgs {
+            branch: "main".to_string(),
+            repos: Vec::new(),
+            all: true,
+            graceful: true,
+            fallback: Some("master".to_string()),
+        },
+        workspace_root.clone(),
+        config_path.clone(),
+    )?;
+
+    output::info("refresh: syncing latest upstream changes");
+    handle_sync(
+        SyncArgs {
+            repos: Vec::new(),
+            rebase: false,
+            ff_only: true,
+            fetch_only: false,
+            autostash: true,
+            prune: false,
+            parallel: None,
+        },
+        workspace_root,
+        config_path,
+    )
+}
+
+fn handle_submit(
+    args: SubmitArgs,
+    workspace_root: Option<PathBuf>,
+    config_path: Option<PathBuf>,
+) -> Result<()> {
+    let workspace = load_workspace(workspace_root.clone(), config_path.clone())?;
+    let plan = build_plan_summary(&workspace, &[], &[])?;
+    if plan.changed.is_empty() {
+        output::info("no changed repositories detected; nothing to submit");
+        return Ok(());
+    }
+
+    let target_repos: Vec<String> = ordered_plan_repos(&plan)
+        .into_iter()
+        .map(|repo| repo.as_str().to_string())
+        .collect();
+    let commit_message = args.message.unwrap_or_else(|| "updates".to_string());
+    let mr_args = MrCreateArgs {
+        auto_branch: !args.no_auto_branch,
+        branch_name: args.branch_name,
+        ..MrCreateArgs::default()
+    };
+
+    output::info("submit: creating merge requests");
+    handle_mr_create(mr_args, &workspace)?;
+
+    output::info("submit: staging changes");
+    handle_add(
+        AddArgs {
+            repos: target_repos.clone(),
+            all: false,
+            patch: false,
+            pathspec: Vec::new(),
+        },
+        workspace_root.clone(),
+        config_path.clone(),
+    )?;
+
+    output::info("submit: committing changes");
+    handle_commit(
+        CommitArgs {
+            message: Some(commit_message),
+            all: false,
+            repos: target_repos.clone(),
+            amend: false,
+            no_hooks: false,
+            yes: false,
+            allow_empty: false,
+            trailers: Vec::new(),
+        },
+        workspace_root.clone(),
+        config_path.clone(),
+    )?;
+
+    output::info("submit: pushing branches");
+    handle_push(
+        PushArgs {
+            repos: target_repos,
+            force: false,
+            force_with_lease: false,
+            set_upstream: true,
+            no_hooks: false,
+            yes: false,
+            dry_run: false,
+        },
+        workspace_root,
+        config_path,
+    )
+}
+
 fn handle_exec(
     args: ExecArgs,
     workspace_root: Option<PathBuf>,
@@ -1805,7 +1935,12 @@ fn handle_branch(
         }
         checkout_branch(&open.repo, &args.name)?;
         if let Some(track) = args.track.as_ref() {
-            output::git_op(&format!("branch --set-upstream-to {} {}", track, args.name));
+            output::git_op(&format!(
+                "branch --set-upstream-to {} {} (repo {})",
+                track,
+                args.name,
+                repo.id.as_str()
+            ));
             set_branch_upstream(&open.repo, &args.name, track)?;
         }
     }
@@ -1896,7 +2031,7 @@ fn handle_add(
             cmd.push("--".to_string());
             cmd.extend(args.pathspec.iter().cloned());
         }
-        output::git_op(&cmd[1..].join(" "));
+        log_git_command_for_repo(repo.id.as_str(), &cmd);
         run_command_in_repo(&repo.path, &cmd)?;
     }
 
@@ -1929,7 +2064,7 @@ fn handle_commit(
         }
         if args.all {
             let cmd = vec!["git".to_string(), "add".to_string(), "-A".to_string()];
-            output::git_op(&cmd[1..].join(" "));
+            log_git_command_for_repo(repo.id.as_str(), &cmd);
             run_command_in_repo(&repo.path, &cmd)?;
         }
         let open = open_repo(&repo.path)?;
@@ -1963,7 +2098,13 @@ fn handle_commit(
             cmd.push("--trailer".to_string());
             cmd.push(trailer.clone());
         }
-        output::git_op(&cmd[1..].join(" "));
+        log_git_command_for_repo(repo.id.as_str(), &cmd);
+        if args.message.is_none() {
+            output::info(&format!(
+                "opening commit message editor (repo {})",
+                repo.id.as_str()
+            ));
+        }
         run_command_in_repo(&repo.path, &cmd)?;
     }
 
@@ -2013,7 +2154,7 @@ fn handle_push(
         if args.set_upstream {
             cmd.push("-u".to_string());
         }
-        output::git_op(&cmd[1..].join(" "));
+        log_git_command_for_repo(repo.id.as_str(), &cmd);
         run_command_in_repo(&repo.path, &cmd)?;
     }
 
@@ -2037,7 +2178,8 @@ fn handle_diff(
     if args.format.eq_ignore_ascii_case("json") {
         let mut entries = Vec::new();
         for repo in repos {
-            let files = git_diff_files(&repo.path, args.staged, include_untracked)?;
+            let files =
+                git_diff_files(&repo.path, repo.id.as_str(), args.staged, include_untracked)?;
             entries.push(DiffJsonEntry {
                 repo: repo.id.as_str().to_string(),
                 files,
@@ -2058,7 +2200,8 @@ fn handle_diff(
             if multi {
                 println!("== {} ==", repo.id.as_str());
             }
-            let files = git_diff_files(&repo.path, args.staged, include_untracked)?;
+            let files =
+                git_diff_files(&repo.path, repo.id.as_str(), args.staged, include_untracked)?;
             for file in files {
                 println!("{}", file);
             }
@@ -2071,7 +2214,7 @@ fn handle_diff(
             println!("== {} ==", repo.id.as_str());
         }
         let cmd = build_diff_command(&args);
-        output::git_op(&cmd[1..].join(" "));
+        log_git_command_for_repo(repo.id.as_str(), &cmd);
         run_command_in_repo(&repo.path, &cmd)?;
     }
 
@@ -2196,7 +2339,7 @@ fn handle_clean(
         if args.ignored {
             command.push("-x".to_string());
         }
-        output::git_op(&command[1..].join(" "));
+        log_git_command_for_repo(repo.id.as_str(), &command);
         run_command_in_repo(&repo.path, &command)?;
     }
 
@@ -4060,7 +4203,7 @@ fn with_related_mr_links(
     let end_marker = "<!-- harmonia:related:end -->";
     let base = if let Some(start) = description.find(start_marker) {
         let suffix = &description[start..];
-        if suffix.find(end_marker).is_some() {
+        if suffix.contains(end_marker) {
             let mut truncated = String::from(&description[..start]);
             truncated = truncated.trim_end().to_string();
             truncated
@@ -5584,7 +5727,23 @@ fn build_diff_command(args: &DiffArgs) -> Vec<String> {
     cmd
 }
 
-fn git_diff_files(repo_path: &Path, staged: bool, include_untracked: bool) -> Result<Vec<String>> {
+fn log_git_command_for_repo(repo_name: &str, command: &[String]) {
+    let rendered = if command.len() > 1 {
+        command[1..].join(" ")
+    } else if let Some(command_name) = command.first() {
+        command_name.clone()
+    } else {
+        String::new()
+    };
+    output::git_op(&format!("{} (repo {})", rendered, repo_name));
+}
+
+fn git_diff_files(
+    repo_path: &Path,
+    repo_name: &str,
+    staged: bool,
+    include_untracked: bool,
+) -> Result<Vec<String>> {
     let mut cmd = vec![
         "git".to_string(),
         "diff".to_string(),
@@ -5593,7 +5752,7 @@ fn git_diff_files(repo_path: &Path, staged: bool, include_untracked: bool) -> Re
     if staged {
         cmd.push("--staged".to_string());
     }
-    output::git_op(&cmd[1..].join(" "));
+    log_git_command_for_repo(repo_name, &cmd);
     let output = run_command_output_in_repo(repo_path, &cmd)?;
     let mut files: Vec<String> = output
         .lines()
@@ -5609,7 +5768,7 @@ fn git_diff_files(repo_path: &Path, staged: bool, include_untracked: bool) -> Re
             "--others".to_string(),
             "--exclude-standard".to_string(),
         ];
-        output::git_op(&untracked_cmd[1..].join(" "));
+        log_git_command_for_repo(repo_name, &untracked_cmd);
         let untracked = run_command_output_in_repo(repo_path, &untracked_cmd)?;
         files.extend(
             untracked

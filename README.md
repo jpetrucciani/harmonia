@@ -17,9 +17,9 @@ Poly-repo orchestrator for coordinating changes across many repositories with de
 
 The core workflow is implemented and tested:
 
-- Workspace/repo management: `init`, `clone`, `sync`, `status`, `config`, `repo`, `edit`, `clean`
+- Workspace/repo management: `init`, `clone`, `sync`, `refresh`, `status`, `config`, `repo`, `edit`, `clean`
 - Multi-repo execution: `exec`, `run`, `each`, `test`, `lint`
-- Git coordination: `branch`, `checkout`, `add`, `commit`, `push`, `diff`
+- Git coordination: `branch`, `checkout`, `add`, `commit`, `push`, `diff`, `submit`
 - Dependency graph: `graph show|deps|dependents|order|check`
 - Version/deps: `version show|check|bump`, `deps show|check|update`
 - Planning and MR workflow: `plan`, `mr create|status|update|merge|close`
@@ -40,6 +40,8 @@ Start by entering the pinned shell first:
 
 ```bash
 nix-shell
+
+# or direnv will just do this all for you!
 ```
 
 Then install from source:
@@ -82,6 +84,26 @@ harmonia mr create --title "feat: my change"
 ```
 
 ## Day-to-Day Flow
+
+Default shortcut workflow:
+
+```bash
+# reset to main/master and fast-forward from upstream
+harmonia refresh
+
+# make local edits, then submit
+harmonia submit
+# optional commit message override:
+harmonia submit -m "feat: auth flow"
+
+# after merges land, reset + update again
+harmonia refresh
+```
+
+`submit` runs: `mr create` (auto-branch by default), `add`, `commit -m`, `push -u`.
+If you omit `-m/--message`, it uses `updates`.
+
+Detailed/manual flow:
 
 ```bash
 # sync local state

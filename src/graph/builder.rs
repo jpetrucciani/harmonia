@@ -59,12 +59,19 @@ fn parse_repo_dependencies(
         .and_then(|pat| regex::Regex::new(pat).ok());
 
     for dep in &mut parsed {
-        let is_internal = internal_packages.contains(&dep.name)
+        let original_name = dep.name.clone();
+        let normalized_name =
+            normalize_declared_dependency(&original_name, package_map, repo_name_map);
+        let is_internal = internal_packages.contains(&original_name)
+            || internal_packages.contains(&normalized_name)
             || internal_pattern
                 .as_ref()
-                .map(|re| re.is_match(&dep.name))
+                .map(|re| re.is_match(&original_name) || re.is_match(&normalized_name))
                 .unwrap_or(false)
-            || package_map.contains_key(&dep.name);
+            || package_map.contains_key(&original_name)
+            || package_map.contains_key(&normalized_name)
+            || repo_name_map.contains_key(&original_name);
+        dep.name = normalized_name;
         dep.is_internal = is_internal;
     }
 
@@ -210,8 +217,8 @@ mod tests {
         let app_deps = graph.edges.get(&app_id).expect("app deps");
         let core_dep = app_deps
             .iter()
-            .find(|dep| dep.name == "core")
-            .expect("core dependency");
+            .find(|dep| dep.name == "core-package")
+            .expect("core-package dependency");
         let serde_dep = app_deps
             .iter()
             .find(|dep| dep.name == "serde")
