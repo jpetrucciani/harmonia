@@ -37,7 +37,9 @@ pub struct SyncOutcome {
 }
 
 pub fn open_repo(path: &Path) -> Result<OpenRepo> {
-    let repo = gix::open(path).map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
+    let mut repo = gix::open(path).map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
+    repo.committer_or_set_generic_fallback()
+        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
     Ok(OpenRepo {
         path: path.to_path_buf(),
         repo,
