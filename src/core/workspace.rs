@@ -26,6 +26,7 @@ impl Workspace {
     pub fn load_from(root: PathBuf, config_path: PathBuf) -> Result<Self, ConfigError> {
         let mut config = load_workspace_config(&config_path)?;
         apply_env_overrides(&mut config);
+        validate_workspace_config(&config)?;
 
         let repos = build_repos(&root, &config)?;
         let graph = build_graph(&repos).unwrap_or_else(|_| DependencyGraph::new());
@@ -43,6 +44,61 @@ fn apply_env_overrides(config: &mut WorkspaceConfig) {
     if let Ok(repos_dir) = env::var("HARMONIA_REPOS_DIR") {
         config.workspace.repos_dir = repos_dir;
     }
+}
+
+fn validate_workspace_config(config: &WorkspaceConfig) -> Result<(), ConfigError> {
+    if let Some(defaults) = config.defaults.as_ref() {
+        if let Some(protocol) = defaults.clone_protocol.as_deref() {
+            let protocol = protocol.trim().to_ascii_lowercase();
+            if protocol != "ssh" && protocol != "https" {
+                return Err(ConfigError::Validation(format!(
+                    "defaults.clone_protocol must be 'ssh' or 'https', got '{}'",
+                    protocol
+                )));
+            }
+        }
+    }
+
+    if let Some(mr) = config.mr.as_ref() {
+        if let Some(link_strategy) = mr.link_strategy.as_deref() {
+            let link_strategy = link_strategy.trim().to_ascii_lowercase();
+            if !matches!(
+                link_strategy.as_str(),
+                "related" | "description" | "issue" | "all"
+            ) {
+                return Err(ConfigError::Validation(format!(
+                    "mr.link_strategy must be one of related, description, issue, all, got '{}'",
+                    link_strategy
+                )));
+            }
+        }
+    }
+
+    if let Some(changesets) = config.changesets.as_ref() {
+        if let Some(enabled) = changesets.enabled {
+            if enabled
+                && changesets
+                    .dir
+                    .as_deref()
+                    .is_some_and(|dir| dir.trim().is_empty())
+            {
+                return Err(ConfigError::Validation(
+                    "changesets.dir cannot be empty when changesets.enabled=true".to_string(),
+                ));
+            }
+        }
+    }
+
+    for (repo, entry) in &config.repos {
+        if entry.external && entry.ignored {
+            return Err(ConfigError::Validation(format!(
+                "repo '{}' cannot set both external=true and ignored=true",
+                repo
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn build_repos(
@@ -96,6 +152,7 @@ fn build_repos(
             remote_url: remote_url.unwrap_or_default(),
             default_branch,
             package_name: repo_package_name,
+            depends_on: entry.depends_on.clone(),
             ecosystem,
             config: repo_config,
             external: entry.external,
@@ -144,5 +201,41 @@ fn default_host_for_forge(forge_type: &str) -> Option<String> {
         "github" => Some("github.com".to_string()),
         "gitlab" => Some("gitlab.com".to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::{MrConfig, RepoEntry, WorkspaceConfig};
+    use crate::core::workspace::validate_workspace_config;
+
+    #[test]
+    fn rejects_invalid_link_strategy() {
+        let config = WorkspaceConfig {
+            mr: Some(MrConfig {
+                link_strategy: Some("invalid".to_string()),
+                ..MrConfig::default()
+            }),
+            ..WorkspaceConfig::default()
+        };
+
+        let err = validate_workspace_config(&config).expect_err("should reject config");
+        assert!(format!("{}", err).contains("mr.link_strategy"));
+    }
+
+    #[test]
+    fn rejects_external_and_ignored_repo() {
+        let mut config = WorkspaceConfig::default();
+        config.repos.insert(
+            "svc".to_string(),
+            RepoEntry {
+                external: true,
+                ignored: true,
+                ..RepoEntry::default()
+            },
+        );
+
+        let err = validate_workspace_config(&config).expect_err("should reject config");
+        assert!(format!("{}", err).contains("external=true and ignored=true"));
     }
 }

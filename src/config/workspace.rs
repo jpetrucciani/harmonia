@@ -62,6 +62,8 @@ pub struct RepoEntry {
     #[serde(default)]
     pub package_name: Option<String>,
     #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(default)]
     pub external: bool,
     #[serde(default)]
     pub ignored: bool,

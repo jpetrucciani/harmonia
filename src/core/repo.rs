@@ -24,6 +24,7 @@ pub struct Repo {
     pub remote_url: String,
     pub default_branch: String,
     pub package_name: Option<String>,
+    pub depends_on: Vec<String>,
     pub ecosystem: Option<EcosystemId>,
     pub config: Option<RepoConfig>,
     pub external: bool,

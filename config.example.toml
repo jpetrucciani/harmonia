@@ -1,0 +1,55 @@
+# Copy this file to: .harmonia/config.toml (preferred)
+# or place it at: .harmonia.toml
+# Then edit repo names/URLs/groups for your local workspace.
+
+[workspace]
+name = "local-platform"
+repos_dir = "repos"
+
+[forge]
+type = "github"
+# host = "github.com"
+# default_group = "platform-team"
+# token = ""  # prefer HARMONIA_FORGE_TOKEN in env
+
+[repos]
+# Minimal repo entry, URL resolved from forge.default_group + defaults.clone_protocol.
+"shared-lib" = { package_name = "shared-lib" }
+
+# Explicit URLs. For local repos, file:// URLs also work.
+"service-a" = { url = "file:///ABSOLUTE/PATH/TO/service-a.git", depends_on = ["shared-lib"] }
+"service-b" = { url = "file:///ABSOLUTE/PATH/TO/service-b.git", depends_on = ["shared-lib", "service-a"] }
+
+# depends_on accepts repo keys and package names. These edges drive graph and merge order.
+# "service-c" = { depends_on = ["shared-lib", "service-a"] }
+
+# Included in graph, excluded from default mutating operations.
+"vendor-sdk" = { url = "file:///ABSOLUTE/PATH/TO/vendor-sdk.git", external = true }
+
+# Excluded from graph and default operations.
+"scratch" = { url = "file:///ABSOLUTE/PATH/TO/scratch.git", ignored = true }
+
+[groups]
+core = ["shared-lib", "service-a", "service-b"]
+all-services = ["service-a", "service-b"]
+default = "core"
+
+[defaults]
+default_branch = "main"
+clone_protocol = "ssh"  # ssh or https
+clone_depth = "full"    # full or integer depth as string
+include_untracked = true
+
+[hooks]
+# Workspace hooks run at workspace root.
+pre_commit = "harmonia test --changed --fail-fast"
+pre_push = "harmonia lint --changed"
+
+[hooks.custom]
+fmt = "harmonia each -- cargo fmt"
+
+[versioning]
+strategy = "semver"   # semver | calver | none
+bump_mode = "semver"  # semver | calver | tinyinc
+# calver_format = "YYYY.0M.MICRO"
+# cascade_bumps = true

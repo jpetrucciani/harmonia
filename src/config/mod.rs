@@ -30,6 +30,8 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("config validation error: {0}")]
+    Validation(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConfigError>;

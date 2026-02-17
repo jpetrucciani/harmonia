@@ -141,3 +141,34 @@ impl EcosystemPlugin for GoPlugin {
         Some("golangci-lint run")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ecosystem::go::GoPlugin;
+    use crate::ecosystem::traits::EcosystemPlugin;
+
+    #[test]
+    fn parses_and_updates_go_mod_dependencies() {
+        let plugin = GoPlugin;
+        let path = std::path::Path::new("go.mod");
+        let content = r#"
+module example.com/svc
+
+go 1.22
+
+require (
+    example.com/core v1.2.3
+)
+"#;
+
+        let deps = plugin
+            .parse_dependencies(path, content)
+            .expect("parse deps");
+        assert!(deps.iter().any(|dep| dep.name == "example.com/core"));
+
+        let updated = plugin
+            .update_dependency(path, content, "example.com/core", "v1.3.0")
+            .expect("update dep");
+        assert!(updated.contains("example.com/core v1.3.0"));
+    }
+}

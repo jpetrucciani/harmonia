@@ -1,69 +1,138 @@
-# Harmonia
+# harmonia
 
 [![uses nix](https://img.shields.io/badge/uses-nix-%237EBAE4)](https://nixos.org/)
 ![rust](https://img.shields.io/badge/Rust-1.95%2B-orange.svg)
 
-Poly-repo orchestrator for coordinating work across multiple repositories.
+Poly-repo orchestrator for coordinating changes across many repositories with dependency awareness.
 
-## What works today
+## Why Harmonia
 
-Core workspace
-- `harmonia init`, `clone`, `status`, `sync` (fetch + fast-forward only)
-- `exec`, `run` (custom hooks), `each` (run per repo)
+- Work in one workspace with many repos and shared config.
+- See dependency order before you cut MRs.
+- Run test/lint/exec commands across selected repos.
+- Keep version and internal dependency updates consistent.
+- Drive merge orchestration with CI-aware MR workflows.
 
-Git coordination
-- `branch`, `checkout` (basic; no `--track`, `--with-deps`, or `--with-all-deps` yet)
-- `add`, `commit`, `push`, `diff`
-- Pre-commit and pre-push hooks (workspace + repo-level)
+## Status
 
-Dependency graph
-- Build graph from repo configs + ecosystem plugins
-- `graph show/deps/dependents/order/check`
-- Formats: tree, flat, dot, json
+The core workflow is implemented and tested:
 
-Versioning and deps
-- `version show/check/bump` (semver, calver, tinyinc)
-- `deps show/check/update` and cascade dependency updates
+- Workspace/repo management: `init`, `clone`, `sync`, `status`, `config`, `repo`, `edit`, `clean`
+- Multi-repo execution: `exec`, `run`, `each`, `test`, `lint`
+- Git coordination: `branch`, `checkout`, `add`, `commit`, `push`, `diff`
+- Dependency graph: `graph show|deps|dependents|order|check`
+- Version/deps: `version show|check|bump`, `deps show|check|update`
+- Planning and MR workflow: `plan`, `mr create|status|update|merge|close`
+- Shell/docs utilities: `shell`, `completion`
 
-## Known gaps
+Current known limitation:
 
-- `sync --rebase` and non fast-forward merges are not implemented
-- `branch --track`, `--with-deps`, `--with-all-deps` not implemented
-- Forge integration and MR features not implemented yet
-- `harmonia test` and `harmonia lint` not implemented yet
+- `mr.add_trailers` is not automated yet. Trailer handling is manual/informational.
+- `forge` support is available for GitHub and GitLab. Bitbucket and Gitea are intentionally not implemented yet.
+
+## Install
+
+### Nix-first installation
+
+Nix is required for this repository.
+
+Start by entering the pinned shell first:
+
+```bash
+nix-shell
+```
+
+Then install from source:
+
+```bash
+cargo install --path .
+```
+
+## Quick Start
+
+1. Create a workspace config:
+
+```bash
+mkdir -p .harmonia
+cp config.example.toml .harmonia/config.toml
+# or create a single-file workspace config at .harmonia.toml
+```
+
+2. Edit repos in `.harmonia/config.toml`.
+3. Clone and inspect:
+
+```bash
+harmonia clone --all
+harmonia status --long
+harmonia graph show --format=tree
+```
+
+4. Run checks and plan:
+
+```bash
+harmonia test --changed --graph-order
+harmonia lint --changed
+harmonia plan
+```
+
+5. Create MRs:
+
+```bash
+harmonia mr create --title "feat: my change"
+```
+
+## Day-to-Day Flow
+
+```bash
+# sync local state
+harmonia sync
+# if you keep local changes around, use:
+harmonia sync --autostash
+
+# branch only repos you need plus dependency context
+harmonia branch feature/auth --create --repos app --with-all-deps
+
+# implement changes, then validate in dependency order
+harmonia test --changed --graph-order --fail-fast
+harmonia lint --changed
+
+# stage and commit selected repos
+harmonia add --repos core,app --all
+harmonia commit --repos core,app --message "feat: auth flow"
+harmonia push --repos core,app --set-upstream
+
+# inspect merge order and constraints
+harmonia plan
+
+# create or update MRs
+harmonia mr create --title "feat: auth flow"
+harmonia mr status --wait --timeout 30
+```
 
 ## Configuration
 
-Harmonia reads workspace config from `.harmonia/config.toml` and optional per-repo config from `.harmonia.toml` inside each repo.
+Harmonia reads:
 
-### Workspace config (required)
+- Workspace config: `.harmonia/config.toml` (preferred) or `.harmonia.toml`
+- Optional repo config: `<repo>/.harmonia.toml`
 
-Create `.harmonia/config.toml` at the workspace root:
+Minimal workspace config shape:
 
 ```toml
 [workspace]
-name = "my-platform"
+name = "platform"
 repos_dir = "repos"
 
 [forge]
-type = "gitlab"
-# host = "gitlab.example.com"
-# default_group = "platform-team"
+type = "github"
 
 [repos]
-"shared-lib" = {}
-"service-a" = { url = "git@gitlab.example.com:platform-team/service-a.git" }
-"legacy-api" = { url = "git@gitlab.example.com:legacy/api.git", default_branch = "master" }
-
-# external stays in the graph, but excluded from default mutating ops
-"external-sdk" = { url = "git@github.com:vendor/sdk.git", external = true }
-
-# ignored is excluded from graph and default ops
-"scratch" = { url = "git@gitlab.example.com:platform-team/scratch.git", ignored = true }
+"core" = { package_name = "core-pkg" }
+"app" = { url = "file:///abs/path/to/app.git", depends_on = ["core"] }
 
 [groups]
-core = ["shared-lib", "service-a"]
-# default = "core"
+core = ["core", "app"]
+default = "core"
 
 [defaults]
 default_branch = "main"
@@ -74,76 +143,116 @@ include_untracked = true
 [hooks]
 pre_commit = "harmonia test --changed --fail-fast"
 pre_push = "harmonia lint --changed"
-
-[versioning]
-strategy = "semver"      # semver | calver | none
-bump_mode = "semver"     # semver | calver | tinyinc
-# calver_format = "YYYY.0M.MICRO"
-# cascade_bumps = false
 ```
 
-### Repo config (optional)
+Workspace-level dependency edges can be declared directly in `[repos].<name>.depends_on`.
+This controls graph order and merge planning without requiring per-repo config files.
 
-Create `.harmonia.toml` in a repo root to define versioning, deps, and hooks:
+Example:
 
 ```toml
-[package]
-name = "shared-lib"
-ecosystem = "python"  # python | rust | node | go | custom
-
-[versioning]
-file = "pyproject.toml"
-path = "project.version"
-strategy = "semver"
-bump_mode = "semver"
-# pattern = 'VERSION = "(\d+\.\d+\.\d+)"'
-
-[dependencies]
-file = "pyproject.toml"
-path = "project.dependencies"
-internal_pattern = "^(shared-|service-|legacy-)"
-# internal_packages = ["shared-lib", "service-a-client"]
-
-[hooks]
-# disable_workspace_hooks = ["pre_commit"]
-pre_commit = "uv run pytest -x"
-pre_push = "uv run ruff check . && uv run mypy ."
-
-[hooks.custom]
-format = "uv run ruff format ."
+[repos]
+"core" = { package_name = "core-pkg" }
+"lib" = { depends_on = ["core"] }          # by repo key
+"api" = { depends_on = ["core-pkg", "lib"] } # by package name or repo key
 ```
 
-## Quick start
+Inspect the resulting order with:
 
 ```bash
-# from a new workspace directory
-harmonia init
-# or initialize from existing config
-harmonia init ./config-repo --directory ./my-workspace
-
-# clone repos
-harmonia clone --all
-
-# sync
-harmonia sync
-
-# show graph
-harmonia graph --format=tree
-
-# bump versions (dry-run)
-harmonia version bump patch --dry-run
+harmonia graph order
+harmonia plan
 ```
 
-## Environment variables
+`sync` default behavior:
 
-- `HARMONIA_WORKSPACE` override workspace root
-- `HARMONIA_CONFIG` override config path
-- `HARMONIA_REPOS_DIR` override repos dir
-- `HARMONIA_PARALLEL` default parallelism
+- fetches upstream for each selected repo
+- fast-forwards when possible
+- merges with `--no-edit` when histories diverge
+- requires a clean working tree for branch updates by default
+
+Use `harmonia sync --autostash` to stash local changes before update and re-apply them after.
+Use `harmonia sync --fetch-only` to only fetch and not update local branches.
+
+See `config.example.toml` and `docs/configuration.md` for full details.
+
+## Documentation
+
+Primary docs:
+
+- `docs/index.md`
+- `docs/getting-started.md`
+- `docs/configuration.md`
+- `docs/cli/index.md`
+- `docs/workflows.md`
+- `docs/plan-and-mr.md`
+- `docs/shell.md`
+- `docs/troubleshooting.md`
+- `docs/release.md`
+
+Generated reference assets:
+
+- CLI help snapshots: `docs/cli/harmonia-help.txt` and `docs/cli/harmonia-*-help.txt`
+- Manual page: `docs/man/harmonia.1`
+- Completions: `docs/completions/`
+
+## Docs Tooling
+
+VitePress site scripts:
+
+```bash
+cd docs
+npm install
+npm run docs:dev
+```
+
+Generate completions:
+
+```bash
+generate_completions
+# or
+generate_completions ./docs/completions
+```
+
+Generate CLI help snapshots + man page:
+
+```bash
+generate_docs
+# or
+generate_docs ./docs
+```
+
+Preview the man page:
+
+```bash
+man -l docs/man/harmonia.1
+```
+
+## Local Fixture Smoke Flow
+
+```bash
+fixture_workspace --force /tmp/harmonia-local-fixture
+smoke_fixture /tmp/harmonia-local-fixture/workspace
+```
+
+## Environment Variables
+
+- `HARMONIA_FORGE_TOKEN` forge API token, overrides config token
+- `HARMONIA_WORKSPACE` workspace root override
+- `HARMONIA_CONFIG` config path override
+- `HARMONIA_REPOS_DIR` repos directory override
+- `HARMONIA_PARALLEL` default parallelism override
 - `HARMONIA_LOG_LEVEL` logging verbosity
-- `HARMONIA_NO_COLOR` disable color
+- `HARMONIA_NO_COLOR` disable color output
 
-## Notes
+## Development
 
-- Git operations use the git CLI for add/commit/push/diff.
-- Sync currently fetches and fast-forwards only.
+Rust checks:
+
+```bash
+cargo fmt
+cargo clippy --all --benches --tests --examples --all-features
+cargo test --all --tests --lib
+```
+
+Docs (VitePress) scripts are in `docs/package.json`.

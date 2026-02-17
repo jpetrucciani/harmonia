@@ -132,3 +132,39 @@ impl EcosystemPlugin for RustPlugin {
         Some("cargo clippy")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::core::version::{Version, VersionKind};
+    use crate::ecosystem::rust::RustPlugin;
+    use crate::ecosystem::traits::EcosystemPlugin;
+
+    #[test]
+    fn parses_and_updates_rust_manifest() {
+        let plugin = RustPlugin;
+        let path = std::path::Path::new("Cargo.toml");
+        let content =
+            "[package]\nname = \"svc\"\nversion = \"0.1.0\"\n\n[dependencies]\ncore = \"^0.1\"\n";
+
+        let version = plugin
+            .parse_version(path, content)
+            .expect("parse version")
+            .expect("version exists");
+        assert_eq!(version.raw, "0.1.0");
+
+        let deps = plugin
+            .parse_dependencies(path, content)
+            .expect("parse deps");
+        assert!(deps.iter().any(|dep| dep.name == "core"));
+
+        let updated = plugin
+            .update_dependency(path, content, "core", "^0.2")
+            .expect("update dep");
+        assert!(updated.contains("core = \"^0.2\""));
+
+        let updated_version = plugin
+            .update_version(path, &updated, &Version::new("0.2.0", VersionKind::Semver))
+            .expect("update version");
+        assert!(updated_version.contains("version = \"0.2.0\""));
+    }
+}

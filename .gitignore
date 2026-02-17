@@ -51,3 +51,7 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+
+# Private planning/agent docs
+AGENTS.md
+spec.md

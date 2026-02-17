@@ -180,3 +180,35 @@ impl EcosystemPlugin for PythonPlugin {
         Some("ruff check .")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ecosystem::python::PythonPlugin;
+    use crate::ecosystem::traits::EcosystemPlugin;
+
+    #[test]
+    fn parses_and_updates_pyproject_dependencies() {
+        let plugin = PythonPlugin;
+        let path = std::path::Path::new("pyproject.toml");
+        let content = r#"
+[project]
+name = "svc"
+version = "1.0.0"
+dependencies = [
+  "core>=1.2,<2",
+  "httpx[socks]>=0.25; python_version >= '3.11'",
+]
+"#;
+
+        let deps = plugin
+            .parse_dependencies(path, content)
+            .expect("parse deps");
+        assert!(deps.iter().any(|dep| dep.name == "core"));
+        assert!(deps.iter().any(|dep| dep.name == "httpx"));
+
+        let updated = plugin
+            .update_dependency(path, content, "httpx", ">=0.30")
+            .expect("update dep");
+        assert!(updated.contains("httpx[socks] >=0.30; python_version >= '3.11'"));
+    }
+}

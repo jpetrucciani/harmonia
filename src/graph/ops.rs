@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 
@@ -221,12 +221,12 @@ fn topological_order_with_nodes(
     edges: &HashMap<RepoId, Vec<RepoId>>,
     nodes: HashSet<RepoId>,
 ) -> Result<Vec<RepoId>> {
-    let mut indegree: HashMap<RepoId, usize> = HashMap::new();
-    let mut adjacency: HashMap<RepoId, Vec<RepoId>> = HashMap::new();
+    let mut dependency_count: HashMap<RepoId, usize> = HashMap::new();
+    let mut dependents: HashMap<RepoId, Vec<RepoId>> = HashMap::new();
 
     for node in nodes.iter() {
-        indegree.entry(node.clone()).or_insert(0);
-        adjacency.entry(node.clone()).or_default();
+        dependency_count.entry(node.clone()).or_insert(0);
+        dependents.entry(node.clone()).or_default();
     }
 
     for (from, deps) in edges {
@@ -237,27 +237,37 @@ fn topological_order_with_nodes(
             if !nodes.contains(dep) {
                 continue;
             }
-            adjacency.entry(from.clone()).or_default().push(dep.clone());
-            let entry = indegree.entry(dep.clone()).or_insert(0);
+            dependents
+                .entry(dep.clone())
+                .or_default()
+                .push(from.clone());
+            let entry = dependency_count.entry(from.clone()).or_insert(0);
             *entry += 1;
         }
     }
 
-    let mut queue: VecDeque<RepoId> = indegree
+    for values in dependents.values_mut() {
+        values.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        values.dedup();
+    }
+
+    let mut ready: Vec<RepoId> = dependency_count
         .iter()
         .filter_map(|(node, &count)| if count == 0 { Some(node.clone()) } else { None })
         .collect();
+    ready.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     let mut order = Vec::new();
 
-    while let Some(node) = queue.pop_front() {
+    while !ready.is_empty() {
+        let node = ready.remove(0);
         order.push(node.clone());
-        if let Some(deps) = adjacency.get(&node) {
-            for dep in deps {
-                if let Some(count) = indegree.get_mut(dep) {
+        if let Some(items) = dependents.get(&node) {
+            for dependent in items {
+                if let Some(count) = dependency_count.get_mut(dependent) {
                     if *count > 0 {
                         *count -= 1;
                         if *count == 0 {
-                            queue.push_back(dep.clone());
+                            insert_ready_sorted(&mut ready, dependent.clone());
                         }
                     }
                 }
@@ -270,4 +280,108 @@ fn topological_order_with_nodes(
     }
 
     Ok(order)
+}
+
+fn insert_ready_sorted(ready: &mut Vec<RepoId>, node: RepoId) {
+    match ready.binary_search_by(|item| item.as_str().cmp(node.as_str())) {
+        Ok(_) => {}
+        Err(index) => ready.insert(index, node),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    use crate::core::repo::{Dependency, Repo, RepoId};
+    use crate::core::version::VersionReq;
+    use crate::graph::ops::{merge_order, topological_order};
+    use crate::graph::DependencyGraph;
+
+    fn make_repo(name: &str) -> Repo {
+        Repo {
+            id: RepoId::new(name),
+            path: PathBuf::from(format!("/tmp/{name}")),
+            remote_url: String::new(),
+            default_branch: "main".to_string(),
+            package_name: Some(name.to_string()),
+            depends_on: Vec::new(),
+            ecosystem: None,
+            config: None,
+            external: false,
+            ignored: false,
+        }
+    }
+
+    fn make_dependency(name: &str) -> Dependency {
+        Dependency {
+            name: name.to_string(),
+            constraint: VersionReq::new("^1.0.0"),
+            is_internal: true,
+        }
+    }
+
+    fn make_repos() -> HashMap<RepoId, Repo> {
+        let mut repos = HashMap::new();
+        for name in ["app", "lib", "core"] {
+            let repo = make_repo(name);
+            repos.insert(repo.id.clone(), repo);
+        }
+        repos
+    }
+
+    #[test]
+    fn topological_order_is_dependency_first() {
+        let repos = make_repos();
+        let graph = DependencyGraph {
+            edges: HashMap::from([
+                (RepoId::new("app"), vec![make_dependency("lib")]),
+                (RepoId::new("lib"), vec![make_dependency("core")]),
+                (RepoId::new("core"), Vec::new()),
+            ]),
+        };
+
+        let order = topological_order(&graph, &repos).expect("topological order should succeed");
+        let names: Vec<String> = order
+            .into_iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        assert_eq!(names, vec!["core", "lib", "app"]);
+    }
+
+    #[test]
+    fn merge_order_includes_dependencies_before_target() {
+        let repos = make_repos();
+        let graph = DependencyGraph {
+            edges: HashMap::from([
+                (RepoId::new("app"), vec![make_dependency("lib")]),
+                (RepoId::new("lib"), vec![make_dependency("core")]),
+                (RepoId::new("core"), Vec::new()),
+            ]),
+        };
+
+        let order =
+            merge_order(&graph, &repos, &[RepoId::new("app")]).expect("merge order should succeed");
+        let names: Vec<String> = order
+            .into_iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        assert_eq!(names, vec!["core", "lib", "app"]);
+    }
+
+    #[test]
+    fn topological_order_errors_on_cycle() {
+        let repos = make_repos();
+        let graph = DependencyGraph {
+            edges: HashMap::from([
+                (RepoId::new("app"), vec![make_dependency("lib")]),
+                (RepoId::new("lib"), vec![make_dependency("app")]),
+                (RepoId::new("core"), Vec::new()),
+            ]),
+        };
+
+        let result = topological_order(&graph, &repos);
+        assert!(result.is_err());
+    }
 }

@@ -22,6 +22,17 @@ pub enum ViolationType {
     Circular,
 }
 
+impl ViolationType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ViolationType::Unsatisfied => "unsatisfied",
+            ViolationType::ExactPin => "exact_pin",
+            ViolationType::UpperBound => "upper_bound",
+            ViolationType::Circular => "circular",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ConstraintReport {
     pub violations: Vec<ConstraintViolation>,
@@ -183,4 +194,91 @@ fn has_upper_bound(req: &semver::VersionReq) -> bool {
     req.comparators
         .iter()
         .any(|comp| matches!(comp.op, semver::Op::Less | semver::Op::LessEq))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::core::repo::{Dependency, Repo, RepoId};
+    use crate::core::version::{Version, VersionKind, VersionReq};
+    use crate::ecosystem::EcosystemId;
+    use crate::graph::constraint::{check_constraints, ViolationType};
+    use crate::graph::DependencyGraph;
+
+    fn repo(id: &str, package_name: &str) -> (RepoId, Repo) {
+        let repo_id = RepoId::new(id.to_string());
+        (
+            repo_id.clone(),
+            Repo {
+                id: repo_id,
+                path: std::path::PathBuf::from(format!("/tmp/{id}")),
+                remote_url: String::new(),
+                default_branch: "main".to_string(),
+                package_name: Some(package_name.to_string()),
+                depends_on: Vec::new(),
+                ecosystem: Some(EcosystemId::Rust),
+                config: None,
+                external: false,
+                ignored: false,
+            },
+        )
+    }
+
+    #[test]
+    fn check_constraints_detects_unsatisfied_exact_and_upper_bound() {
+        let mut repos = HashMap::new();
+        let (core_id, core_repo) = repo("core", "core");
+        repos.insert(core_id.clone(), core_repo);
+        let (unsat_id, unsat_repo) = repo("app-unsat", "app-unsat");
+        repos.insert(unsat_id.clone(), unsat_repo);
+        let (exact_id, exact_repo) = repo("app-exact", "app-exact");
+        repos.insert(exact_id.clone(), exact_repo);
+        let (upper_id, upper_repo) = repo("app-upper", "app-upper");
+        repos.insert(upper_id.clone(), upper_repo);
+
+        let mut graph = DependencyGraph::new();
+        graph.edges.insert(
+            unsat_id,
+            vec![Dependency {
+                name: "core".to_string(),
+                constraint: VersionReq::new("^2.0.0"),
+                is_internal: true,
+            }],
+        );
+        graph.edges.insert(
+            exact_id,
+            vec![Dependency {
+                name: "core".to_string(),
+                constraint: VersionReq::new("=1.2.3"),
+                is_internal: true,
+            }],
+        );
+        graph.edges.insert(
+            upper_id,
+            vec![Dependency {
+                name: "core".to_string(),
+                constraint: VersionReq::new("<2.0.0"),
+                is_internal: true,
+            }],
+        );
+        graph.edges.entry(core_id.clone()).or_default();
+
+        let mut versions = HashMap::new();
+        versions.insert(core_id, Version::new("1.2.3", VersionKind::Semver));
+
+        let report = check_constraints(&graph, &repos, &versions);
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.violation_type == ViolationType::Unsatisfied));
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.violation_type == ViolationType::ExactPin));
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.violation_type == ViolationType::UpperBound));
+    }
 }

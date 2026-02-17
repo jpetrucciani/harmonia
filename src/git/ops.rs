@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
 use anyhow::Context;
@@ -22,12 +23,16 @@ pub struct SyncOptions {
     pub fetch_only: bool,
     pub ff_only: bool,
     pub rebase: bool,
+    pub autostash: bool,
     pub prune: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SyncOutcome {
     pub fast_forwarded: bool,
+    pub rebased: bool,
+    pub merged: bool,
+    pub autostashed: bool,
     pub pruned: usize,
 }
 
@@ -66,19 +71,35 @@ pub fn sync_repo(repo: &gix::Repository, options: SyncOptions) -> Result<SyncOut
     if options.fetch_only {
         return Ok(SyncOutcome {
             fast_forwarded: false,
+            rebased: false,
+            merged: false,
+            autostashed: false,
             pruned: fetch.pruned,
         });
     }
 
     if options.rebase {
-        return Err(HarmoniaError::Other(anyhow::anyhow!(
-            "rebase is not implemented yet"
-        )));
+        let rebase = rebase_repo(repo, fetch.remote_name.as_deref(), options.autostash)?;
+        return Ok(SyncOutcome {
+            fast_forwarded: false,
+            rebased: rebase.rebased,
+            merged: false,
+            autostashed: rebase.autostashed,
+            pruned: fetch.pruned,
+        });
     }
 
-    let fast_forwarded = fast_forward_repo(repo, fetch.remote_name.as_deref(), options.ff_only)?;
+    let update = update_after_fetch(
+        repo,
+        fetch.remote_name.as_deref(),
+        options.ff_only,
+        options.autostash,
+    )?;
     Ok(SyncOutcome {
-        fast_forwarded,
+        fast_forwarded: matches!(update.update, SyncUpdate::FastForward),
+        rebased: false,
+        merged: matches!(update.update, SyncUpdate::Merged),
+        autostashed: update.autostashed,
         pruned: fetch.pruned,
     })
 }
@@ -120,6 +141,20 @@ pub fn repo_status(repo: &gix::Repository) -> Result<StatusSummary> {
 }
 
 pub fn current_branch(repo: &gix::Repository) -> Result<String> {
+    if let Some(work_dir) = repo.workdir() {
+        let output = Command::new("git")
+            .current_dir(work_dir)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .map_err(|err| HarmoniaError::Other(anyhow::anyhow!(format!("{}", err))))?;
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !name.is_empty() {
+                return Ok(name);
+            }
+        }
+    }
+
     let head = repo
         .head()
         .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
@@ -190,6 +225,26 @@ pub fn checkout_branch(repo: &gix::Repository, name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn create_and_checkout_branch(repo: &gix::Repository, name: &str) -> Result<()> {
+    run_git_command(
+        repo,
+        &["checkout", "-b", name],
+        "create and checkout branch",
+    )
+}
+
+pub fn set_branch_upstream(
+    repo: &gix::Repository,
+    local_branch: &str,
+    upstream: &str,
+) -> Result<()> {
+    run_git_command(
+        repo,
+        &["branch", "--set-upstream-to", upstream, local_branch],
+        "set branch upstream",
+    )
+}
+
 struct FetchOutcome {
     remote_name: Option<String>,
     pruned: usize,
@@ -230,14 +285,27 @@ fn fetch_repo(repo: &gix::Repository, prune: bool) -> Result<FetchOutcome> {
     })
 }
 
-fn fast_forward_repo(
+enum SyncUpdate {
+    None,
+    FastForward,
+    Merged,
+}
+
+struct SyncUpdateOutcome {
+    update: SyncUpdate,
+    autostashed: bool,
+}
+
+fn update_after_fetch(
     repo: &gix::Repository,
     remote_name: Option<&str>,
     ff_only: bool,
-) -> Result<bool> {
+    autostash: bool,
+) -> Result<SyncUpdateOutcome> {
     let tracking = tracking_ref_name_for_head(repo, remote_name)?.ok_or_else(|| {
         HarmoniaError::Other(anyhow::anyhow!("no upstream tracking branch configured"))
     })?;
+    let tracking_name = tracking.to_str_lossy().to_string();
 
     let mut head_ref = repo
         .head_ref()
@@ -262,7 +330,10 @@ fn fast_forward_repo(
         .detach();
 
     if local_id == remote_id {
-        return Ok(false);
+        return Ok(SyncUpdateOutcome {
+            update: SyncUpdate::None,
+            autostashed: false,
+        });
     }
 
     let merge_base = repo
@@ -270,32 +341,230 @@ fn fast_forward_repo(
         .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?
         .detach();
     if merge_base == remote_id {
-        return Ok(false);
+        return Ok(SyncUpdateOutcome {
+            update: SyncUpdate::None,
+            autostashed: false,
+        });
     }
-    if merge_base != local_id {
-        if ff_only {
-            return Err(HarmoniaError::Other(anyhow::anyhow!(
-                "fast-forward is not possible"
-            )));
-        }
+
+    if merge_base == local_id {
+        let (_, autostashed) = with_optional_autostash(repo, autostash, || {
+            checkout_tree(repo, remote_id)?;
+            head_ref
+                .set_target_id(remote_id, "fast-forward")
+                .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
+            Ok(())
+        })?;
+        return Ok(SyncUpdateOutcome {
+            update: SyncUpdate::FastForward,
+            autostashed,
+        });
+    }
+
+    if ff_only {
         return Err(HarmoniaError::Other(anyhow::anyhow!(
-            "non fast-forward update required; merge is not implemented yet"
+            "fast-forward is not possible"
         )));
     }
 
-    let status = repo_status(repo)?;
-    if !status.is_clean() {
-        return Err(HarmoniaError::Other(anyhow::anyhow!(
-            "working tree has uncommitted changes"
-        )));
-    }
+    let (_, autostashed) = with_optional_autostash(repo, autostash, || {
+        run_git_command(
+            repo,
+            &["merge", "--no-edit", tracking_name.as_str()],
+            "merge tracking branch",
+        )
+    })?;
+    Ok(SyncUpdateOutcome {
+        update: SyncUpdate::Merged,
+        autostashed,
+    })
+}
 
-    checkout_tree(repo, remote_id)?;
-    head_ref
-        .set_target_id(remote_id, "fast-forward")
+struct RebaseOutcome {
+    rebased: bool,
+    autostashed: bool,
+}
+
+fn rebase_repo(
+    repo: &gix::Repository,
+    remote_name: Option<&str>,
+    autostash: bool,
+) -> Result<RebaseOutcome> {
+    let tracking = tracking_ref_name_for_head(repo, remote_name)?.ok_or_else(|| {
+        HarmoniaError::Other(anyhow::anyhow!("no upstream tracking branch configured"))
+    })?;
+    let tracking_name = tracking.to_str_lossy().to_string();
+
+    let local_id = repo
+        .head_id()
+        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?
+        .detach();
+    let mut tracking_ref = repo
+        .find_reference(tracking.as_bstr())
         .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
+    let remote_id = tracking_ref
+        .peel_to_id()
+        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?
+        .detach();
 
-    Ok(true)
+    if local_id == remote_id {
+        return Ok(RebaseOutcome {
+            rebased: false,
+            autostashed: false,
+        });
+    }
+
+    let merge_base = repo
+        .merge_base(local_id, remote_id)
+        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?
+        .detach();
+    if merge_base == remote_id {
+        return Ok(RebaseOutcome {
+            rebased: false,
+            autostashed: false,
+        });
+    }
+
+    let (_, autostashed) = with_optional_autostash(repo, autostash, || {
+        run_git_command(
+            repo,
+            &["rebase", tracking_name.as_str()],
+            "rebase onto tracking branch",
+        )
+    })?;
+
+    let updated = repo
+        .head_id()
+        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?
+        .detach();
+    Ok(RebaseOutcome {
+        rebased: updated != local_id,
+        autostashed,
+    })
+}
+
+fn with_optional_autostash<T, F>(
+    repo: &gix::Repository,
+    autostash: bool,
+    operation: F,
+) -> Result<(T, bool)>
+where
+    F: FnOnce() -> Result<T>,
+{
+    let status = repo_status(repo)?;
+    if status.is_clean() {
+        return operation().map(|value| (value, false));
+    }
+    if !autostash {
+        return Err(HarmoniaError::Other(anyhow::anyhow!(
+            "working tree has uncommitted changes, use --autostash to stash and re-apply local changes automatically or use --fetch-only"
+        )));
+    }
+
+    let stashed = push_autostash(repo)?;
+    let result = operation();
+    match result {
+        Ok(value) => {
+            if stashed {
+                pop_autostash(repo).map_err(|err| {
+                    HarmoniaError::Other(anyhow::anyhow!(format!(
+                        "sync completed but failed to re-apply stashed changes: {}. recover manually with 'git stash list' and 'git stash pop'",
+                        err
+                    )))
+                })?;
+            }
+            Ok((value, stashed))
+        }
+        Err(err) => {
+            if stashed {
+                return Err(HarmoniaError::Other(anyhow::anyhow!(format!(
+                    "{}. local changes were stashed and are still available in 'git stash list'",
+                    err
+                ))));
+            }
+            Err(err)
+        }
+    }
+}
+
+fn push_autostash(repo: &gix::Repository) -> Result<bool> {
+    let before = stash_entry_count(repo)?;
+    run_git_command(
+        repo,
+        &[
+            "stash",
+            "push",
+            "--include-untracked",
+            "--message",
+            "harmonia-sync",
+        ],
+        "stash local changes before sync",
+    )?;
+    let after = stash_entry_count(repo)?;
+    Ok(after > before)
+}
+
+fn pop_autostash(repo: &gix::Repository) -> Result<()> {
+    run_git_command(
+        repo,
+        &["stash", "pop", "--index"],
+        "re-apply stashed changes after sync",
+    )
+}
+
+fn stash_entry_count(repo: &gix::Repository) -> Result<usize> {
+    let output = run_git_command_output(
+        repo,
+        &["stash", "list", "--format=%H"],
+        "list local stashes",
+    )?;
+    Ok(output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .count())
+}
+
+fn run_git_command(repo: &gix::Repository, args: &[&str], context: &str) -> Result<()> {
+    let workdir = repo.workdir().ok_or_else(|| {
+        HarmoniaError::Other(anyhow::anyhow!(
+            "operation requires a worktree but repository is bare"
+        ))
+    })?;
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(workdir)
+        .status()
+        .map_err(|err| HarmoniaError::Other(anyhow::Error::new(err)))?;
+    if status.success() {
+        return Ok(());
+    }
+
+    Err(HarmoniaError::Other(anyhow::anyhow!(format!(
+        "git {} failed",
+        context
+    ))))
+}
+
+fn run_git_command_output(repo: &gix::Repository, args: &[&str], context: &str) -> Result<String> {
+    let workdir = repo.workdir().ok_or_else(|| {
+        HarmoniaError::Other(anyhow::anyhow!(
+            "operation requires a worktree but repository is bare"
+        ))
+    })?;
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workdir)
+        .output()
+        .map_err(|err| HarmoniaError::Other(anyhow::Error::new(err)))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+
+    Err(HarmoniaError::Other(anyhow::anyhow!(format!(
+        "git {} failed",
+        context
+    ))))
 }
 
 fn tracking_ref_name_for_head(

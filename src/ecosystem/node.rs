@@ -118,3 +118,32 @@ impl EcosystemPlugin for NodePlugin {
         Some("npm run lint")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::ecosystem::node::NodePlugin;
+    use crate::ecosystem::traits::EcosystemPlugin;
+
+    #[test]
+    fn parses_and_updates_package_json_dependencies() {
+        let plugin = NodePlugin;
+        let path = std::path::Path::new("package.json");
+        let content = r#"{
+  "name": "svc",
+  "version": "1.0.0",
+  "dependencies": {
+    "core": "^1.0.0"
+  }
+}"#;
+
+        let deps = plugin
+            .parse_dependencies(path, content)
+            .expect("parse deps");
+        assert!(deps.iter().any(|dep| dep.name == "core"));
+
+        let updated = plugin
+            .update_dependency(path, content, "core", "^2.0.0")
+            .expect("update dep");
+        assert!(updated.contains("\"core\": \"^2.0.0\""));
+    }
+}

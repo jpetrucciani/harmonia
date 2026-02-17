@@ -285,3 +285,55 @@ fn apply_calver_format(format: &str, date: CalverDate) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::core::version::{
+        apply_calver_format, bump_calver, bump_rightmost_numeric, bump_version, current_date,
+        parse_bump_level, parse_bump_mode, parse_version_kind, BumpLevel, BumpMode, Version,
+        VersionKind,
+    };
+
+    #[test]
+    fn semver_bump_patch_with_prerelease() {
+        let current = Version::new("1.2.3", VersionKind::Semver);
+        let bumped = bump_version(
+            &current,
+            BumpMode::Semver,
+            Some(BumpLevel::Patch),
+            None,
+            Some("rc.1"),
+        )
+        .expect("bump semver");
+        assert_eq!(bumped.raw, "1.2.4-rc.1");
+        assert!(bumped.semver.is_some());
+    }
+
+    #[test]
+    fn tinyinc_bumps_rightmost_numeric_with_zero_padding() {
+        let bumped = bump_rightmost_numeric("2026.02.009").expect("bump");
+        assert_eq!(bumped, "2026.02.010");
+    }
+
+    #[test]
+    fn tinyinc_errors_without_numeric_segment() {
+        let err = bump_rightmost_numeric("release").expect_err("expected no numeric segment");
+        assert_eq!(err.to_string(), "missing numeric segment to bump");
+    }
+
+    #[test]
+    fn calver_micro_increments_when_format_matches() {
+        let date = current_date();
+        let template = apply_calver_format("YYYY.0M.{MICRO}", date);
+        let current = template.replace("{MICRO}", "009");
+        let bumped = bump_calver(&current, "YYYY.0M.{MICRO}").expect("bump calver");
+        assert_eq!(bumped, template.replace("{MICRO}", "010"));
+    }
+
+    #[test]
+    fn parser_helpers_accept_expected_values() {
+        assert_eq!(parse_bump_level("major"), Some(BumpLevel::Major));
+        assert_eq!(parse_bump_mode("tinyinc"), Some(BumpMode::TinyInc));
+        assert_eq!(parse_version_kind("none"), Some(VersionKind::Raw));
+    }
+}
