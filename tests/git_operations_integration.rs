@@ -31,7 +31,7 @@ impl TestWorkspace {
             ],
         );
 
-        let remote_url = format!("file://{}", remote_bare.display());
+        let remote_url = file_url(&remote_bare);
         fs::write(
             root.join(".harmonia").join("config.toml"),
             format!(
@@ -124,6 +124,14 @@ fn run_git(repo_path: &Path, args: &[&str]) {
         repo_path.display(),
         args.join(" ")
     );
+}
+
+fn file_url(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    if !normalized.starts_with('/') {
+        normalized.insert(0, '/');
+    }
+    format!("file://{normalized}")
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {

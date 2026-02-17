@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static UNIQUE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestWorkspace {
     root: PathBuf,
@@ -178,7 +181,8 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .expect("system clock before unix epoch")
         .as_nanos();
     let pid = std::process::id();
-    std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}"))
+    let unique = UNIQUE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}-{unique}"))
 }
 
 fn assert_success(output: &std::process::Output, context: &str) {
