@@ -458,14 +458,13 @@ fn shell_command_scopes_environment_to_selected_repos() {
 #[test]
 fn shell_command_runs_command_with_workspace_environment() {
     let workspace = TestWorkspace::new();
+    let command = if cfg!(windows) {
+        "echo %HARMONIA_WORKSPACE%"
+    } else {
+        "printf %s \"$HARMONIA_WORKSPACE\""
+    };
 
-    let output = workspace.run_harmonia(&[
-        "shell",
-        "--repos",
-        "core",
-        "--command",
-        "printf %s \"$HARMONIA_WORKSPACE\"",
-    ]);
+    let output = workspace.run_harmonia(&["shell", "--repos", "core", "--command", command]);
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -473,7 +472,10 @@ fn shell_command_runs_command_with_workspace_environment() {
         output.status.success(),
         "shell command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    assert_eq!(stdout, workspace.root.to_string_lossy());
+    assert_eq!(
+        stdout.trim_end_matches(['\r', '\n']),
+        workspace.root.to_string_lossy()
+    );
     assert!(
         !stdout.contains("export HARMONIA_WORKSPACE="),
         "stdout:\n{stdout}"
