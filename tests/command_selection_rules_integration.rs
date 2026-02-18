@@ -176,13 +176,23 @@ fn run_git(repo_path: &Path, args: &[&str]) {
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
-        .as_nanos();
     let pid = std::process::id();
-    let unique = UNIQUE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}-{unique}"))
+    for _ in 0..32 {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let unique = UNIQUE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let candidate =
+            std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}-{unique}"));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => panic!("failed to create temp dir {}: {}", candidate.display(), err),
+        }
+    }
+
+    panic!("failed to create unique temp dir for {prefix}");
 }
 
 fn assert_success(output: &std::process::Output, context: &str) {
