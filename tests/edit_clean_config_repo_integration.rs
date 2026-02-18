@@ -1,7 +1,11 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 struct TestWorkspace {
     root: PathBuf,
@@ -118,12 +122,21 @@ fn run_git(repo_path: &Path, args: &[&str]) {
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before unix epoch")
-        .as_nanos();
     let pid = std::process::id();
-    std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}"))
+    for _ in 0..32 {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let seq = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = std::env::temp_dir().join(format!("harmonia-{prefix}-{pid}-{nanos}-{seq}"));
+        match fs::create_dir(&candidate) {
+            Ok(()) => return candidate,
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => panic!("failed to create temp dir {}: {}", candidate.display(), err),
+        }
+    }
+    panic!("failed to create unique temp dir for {prefix}");
 }
 
 fn assert_success(output: &std::process::Output, context: &str) {
