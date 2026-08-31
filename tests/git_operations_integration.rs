@@ -288,9 +288,17 @@ fn refresh_force_discards_uncommitted_changes() {
 
     let clone_output = workspace.run_harmonia(&["clone", "service"]);
     assert_success(&clone_output, "clone");
+    workspace.configure_clone_identity();
 
     let repo = workspace.cloned_repo_path();
     run_git(&repo, &["checkout", "-b", "feature/local"]);
+    fs::write(
+        repo.join("FEATURE_ONLY.txt"),
+        "committed on feature branch\n",
+    )
+    .expect("write feature-only file");
+    run_git(&repo, &["add", "FEATURE_ONLY.txt"]);
+    run_git(&repo, &["commit", "--quiet", "-m", "add feature-only file"]);
     fs::write(repo.join("README.md"), "local tracked change\n")
         .expect("write tracked local change");
     fs::write(repo.join("STAGED.txt"), "staged local change\n").expect("write staged local change");
@@ -327,6 +335,7 @@ fn refresh_force_discards_uncommitted_changes() {
     assert!(repo.join("STAGED.txt").is_file());
     assert!(repo.join("untracked").join("LOCAL.txt").is_file());
     assert!(nested_repo.is_dir());
+    assert!(repo.join("FEATURE_ONLY.txt").is_file());
 
     let force_refresh = workspace.run_harmonia(&["refresh", "--force"]);
     assert_success(&force_refresh, "refresh --force");
@@ -337,6 +346,7 @@ fn refresh_force_discards_uncommitted_changes() {
     assert!(!repo.join("STAGED.txt").exists());
     assert!(!repo.join("untracked").exists());
     assert!(!nested_repo.exists());
+    assert!(!repo.join("FEATURE_ONLY.txt").exists());
     assert!(repo.join("ignored").join("CACHE.txt").is_file());
 
     let current_branch = Command::new("git")

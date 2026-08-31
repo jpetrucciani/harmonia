@@ -613,49 +613,12 @@ fn tracking_ref_name_for_head(
 }
 
 fn checkout_tree(repo: &gix::Repository, target: gix::hash::ObjectId) -> Result<()> {
-    let workdir = match repo.workdir() {
-        Some(path) => path,
-        None => return Ok(()),
-    };
-
-    let commit = repo
-        .find_commit(target)
-        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
-    let tree_id = commit
-        .tree_id()
-        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?
-        .detach();
-
-    let mut index = repo
-        .index_from_tree(&tree_id)
-        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
-
-    let mut opts = repo
-        .checkout_options(gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping)
-        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
-    opts.destination_is_initially_empty = false;
-
-    let files = Discard;
-    let bytes = Discard;
-    let cancel = AtomicBool::new(false);
-    gix::worktree::state::checkout(
-        &mut index,
-        workdir,
-        repo.objects
-            .clone()
-            .into_arc()
-            .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?,
-        &files,
-        &bytes,
-        &cancel,
-        opts,
+    let target = target.to_string();
+    run_git_command(
+        repo,
+        &["read-tree", "--reset", "-u", target.as_str()],
+        "checkout target tree",
     )
-    .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
-    index
-        .write(Default::default())
-        .map_err(|err| HarmoniaError::Git(anyhow::Error::new(err)))?;
-
-    Ok(())
 }
 
 fn set_head_symbolic(repo: &gix::Repository, target: &str) -> Result<()> {
