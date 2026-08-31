@@ -38,6 +38,7 @@ use crate::util::{output, parallel};
 
 #[derive(Parser, Debug)]
 #[command(name = "harmonia")]
+#[command(version)]
 #[command(about = "Poly-repo orchestrator", long_about = None)]
 pub struct Cli {
     #[arg(
@@ -6986,9 +6987,22 @@ fn include_untracked_by_default(workspace: &Workspace) -> bool {
 mod tests {
     use super::{
         format_mr_branch_conflict_error, parse_ahead_behind_counts, parse_depth, resolve_clone_url,
-        to_https_url, to_ssh_url, MrBranchConflict,
+        to_https_url, to_ssh_url, Cli, MrBranchConflict,
     };
     use crate::core::repo::RepoId;
+    use clap::Parser;
+
+    #[test]
+    fn cli_reports_package_version() {
+        let error = Cli::try_parse_from(["harmonia", "--version"])
+            .expect_err("--version should exit after displaying the package version");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            error.to_string(),
+            format!("harmonia {}\n", env!("CARGO_PKG_VERSION"))
+        );
+    }
 
     #[test]
     fn parse_ahead_behind_output() {

@@ -15,6 +15,7 @@
 }:
 let
   name = "harmonia";
+  cargoManifest = builtins.fromTOML (builtins.readFile ./Cargo.toml);
 
   target = "x86_64-unknown-linux-musl";
   rust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
@@ -696,7 +697,7 @@ let
   };
   bin = rustPlatform.buildRustPackage (finalAttrs: {
     pname = name;
-    version = "0.0.0";
+    version = cargoManifest.package.version;
     src = pkgs.hax.filterSrc { path = ./.; };
     cargoLock.lockFile = ./Cargo.lock;
     auditable = false;

@@ -13,6 +13,7 @@
 ```bash
 nix-shell
 cargo install --path .
+harmonia --version
 ```
 
 ### Development shell
