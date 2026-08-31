@@ -331,10 +331,9 @@ fn refresh_force_discards_uncommitted_changes() {
     let force_refresh = workspace.run_harmonia(&["refresh", "--force"]);
     assert_success(&force_refresh, "refresh --force");
 
-    assert_eq!(
-        fs::read_to_string(repo.join("README.md")).expect("read restored tracked file"),
-        "hello\n"
-    );
+    let restored_readme =
+        fs::read_to_string(repo.join("README.md")).expect("read restored tracked file");
+    assert_eq!(restored_readme.replace("\r\n", "\n"), "hello\n");
     assert!(!repo.join("STAGED.txt").exists());
     assert!(!repo.join("untracked").exists());
     assert!(!nested_repo.exists());
