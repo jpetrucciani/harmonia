@@ -98,7 +98,12 @@ harmonia submit -m "feat: auth flow"
 
 # after merges land, reset + update again
 harmonia refresh
+
+# explicitly discard all staged, unstaged, and untracked work first
+harmonia refresh --force
 ```
+
+`refresh --force` also removes untracked nested Git repositories, but preserves ignored files.
 
 `submit` runs: `mr create` (auto-branch by default), `add`, `commit -m`, `push -u`.
 If you omit `-m/--message`, it uses `updates`.

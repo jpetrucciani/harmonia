@@ -13,6 +13,9 @@ harmonia submit -m "feat: auth flow"
 
 # after merge, refresh again
 harmonia refresh
+
+# if local work should be permanently discarded (ignored files are preserved):
+harmonia refresh --force
 ```
 
 `submit` runs: `mr create` (auto-branch by default), `add`, `commit -m`, `push -u`.

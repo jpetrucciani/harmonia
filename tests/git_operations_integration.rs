@@ -283,6 +283,76 @@ fn branch_checkout_and_sync_flow() {
 }
 
 #[test]
+fn refresh_force_discards_uncommitted_changes() {
+    let workspace = TestWorkspace::new();
+
+    let clone_output = workspace.run_harmonia(&["clone", "service"]);
+    assert_success(&clone_output, "clone");
+
+    let repo = workspace.cloned_repo_path();
+    run_git(&repo, &["checkout", "-b", "feature/local"]);
+    fs::write(repo.join("README.md"), "local tracked change\n")
+        .expect("write tracked local change");
+    fs::write(repo.join("STAGED.txt"), "staged local change\n").expect("write staged local change");
+    run_git(&repo, &["add", "STAGED.txt"]);
+    fs::create_dir_all(repo.join("untracked")).expect("create untracked directory");
+    fs::write(
+        repo.join("untracked").join("LOCAL.txt"),
+        "untracked local change\n",
+    )
+    .expect("write untracked local change");
+    let nested_repo = repo.join("untracked-nested-repo");
+    fs::create_dir_all(&nested_repo).expect("create untracked nested repository");
+    fs::write(nested_repo.join("README.md"), "nested repository\n")
+        .expect("write nested repository file");
+    init_git_repo(&nested_repo, "initial nested commit");
+    fs::write(repo.join(".git").join("info").join("exclude"), "ignored/\n")
+        .expect("configure ignored test directory");
+    fs::create_dir_all(repo.join("ignored")).expect("create ignored directory");
+    fs::write(
+        repo.join("ignored").join("CACHE.txt"),
+        "ignored local file\n",
+    )
+    .expect("write ignored local file");
+
+    let safe_refresh = workspace.run_harmonia(&["refresh"]);
+    assert!(
+        !safe_refresh.status.success(),
+        "refresh without --force unexpectedly discarded local changes"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join("README.md")).expect("read tracked local change"),
+        "local tracked change\n"
+    );
+    assert!(repo.join("STAGED.txt").is_file());
+    assert!(repo.join("untracked").join("LOCAL.txt").is_file());
+    assert!(nested_repo.is_dir());
+
+    let force_refresh = workspace.run_harmonia(&["refresh", "--force"]);
+    assert_success(&force_refresh, "refresh --force");
+
+    assert_eq!(
+        fs::read_to_string(repo.join("README.md")).expect("read restored tracked file"),
+        "hello\n"
+    );
+    assert!(!repo.join("STAGED.txt").exists());
+    assert!(!repo.join("untracked").exists());
+    assert!(!nested_repo.exists());
+    assert!(repo.join("ignored").join("CACHE.txt").is_file());
+
+    let current_branch = Command::new("git")
+        .current_dir(&repo)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .expect("read current branch after forced refresh");
+    assert!(current_branch.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&current_branch.stdout).trim(),
+        "main"
+    );
+}
+
+#[test]
 fn sync_reports_dirty_worktree_with_actionable_guidance() {
     let workspace = TestWorkspace::new();
 

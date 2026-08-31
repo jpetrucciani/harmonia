@@ -23,7 +23,8 @@ use crate::forge::traits::{CreateIssueParams, CreateMrParams, MergeMrParams, Upd
 use crate::forge::{client_from_forge_config, CiState, MrState};
 use crate::git::ops::{
     branch_exists, checkout_branch, clone_repo, create_and_checkout_branch, create_branch,
-    current_branch, open_repo, repo_status, set_branch_upstream, sync_repo, SyncOptions,
+    current_branch, discard_uncommitted_changes, open_repo, repo_status, set_branch_upstream,
+    sync_repo, SyncOptions,
 };
 use crate::git::status::StatusSummary;
 use crate::graph::constraint::{check_constraints, ConstraintReport, ViolationType};
@@ -83,7 +84,10 @@ pub enum Commands {
         long_about = "Fetch and integrate upstream changes across selected repos.\n\nDefault behavior:\n  - fetch from the repository's configured upstream remote\n  - if the current branch can fast-forward, advance it\n  - if histories diverged, create a merge commit with --no-edit\n  - if already up to date, leave the branch unchanged\n\nSafety behavior:\n  - by default, branch updates require a clean working tree\n  - use --autostash to stash local changes before updating and re-apply them after\n  - use --fetch-only to only fetch remote updates without changing local branches"
     )]
     Sync(SyncArgs),
-    #[command(about = "Switch all repos back to main/master and fast-forward from upstream.")]
+    #[command(
+        about = "Switch all repos back to main/master and fast-forward from upstream.",
+        long_about = "Switch all repos back to main/master and fast-forward from upstream.\n\nSafety behavior:\n  - by default, repositories with uncommitted changes are rejected\n  - use --force to permanently discard staged, unstaged, and untracked changes\n  - untracked nested Git repositories are also removed\n  - ignored files are preserved"
+    )]
     Refresh(RefreshArgs),
     #[command(about = "Create MRs, stage, commit, and push changed repos in one command.")]
     Submit(SubmitArgs),
@@ -232,7 +236,14 @@ pub struct SyncArgs {
 }
 
 #[derive(Args, Debug, Default)]
-pub struct RefreshArgs;
+pub struct RefreshArgs {
+    #[arg(
+        short = 'f',
+        long,
+        help = "Discard staged, unstaged, and non-ignored untracked changes before refreshing."
+    )]
+    pub force: bool,
+}
 
 #[derive(Args, Debug, Default)]
 pub struct SubmitArgs {
@@ -973,7 +984,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Commands::Run(args) => handle_run(args, cli.workspace, cli.config),
         Commands::Each(args) => handle_each(args, cli.workspace, cli.config),
         Commands::Branch(args) => handle_branch(args, cli.workspace, cli.config),
-        Commands::Checkout(args) => handle_checkout(args, cli.workspace, cli.config),
+        Commands::Checkout(args) => handle_checkout(args, cli.workspace, cli.config, false),
         Commands::Graph(args) => handle_graph(args, cli.workspace, cli.config),
         Commands::Add(args) => handle_add(args, cli.workspace, cli.config),
         Commands::Commit(args) => handle_commit(args, cli.workspace, cli.config),
@@ -1420,7 +1431,7 @@ fn handle_sync(
 }
 
 fn handle_refresh(
-    _args: RefreshArgs,
+    args: RefreshArgs,
     workspace_root: Option<PathBuf>,
     config_path: Option<PathBuf>,
 ) -> Result<()> {
@@ -1435,6 +1446,7 @@ fn handle_refresh(
         },
         workspace_root.clone(),
         config_path.clone(),
+        args.force,
     )?;
 
     output::info("refresh: syncing latest upstream changes");
@@ -1957,6 +1969,7 @@ fn handle_checkout(
     args: CheckoutArgs,
     workspace_root: Option<PathBuf>,
     config_path: Option<PathBuf>,
+    discard_changes: bool,
 ) -> Result<()> {
     let workspace = load_workspace(workspace_root, config_path)?;
     let repos = select_repos(&workspace, &args.repos, None, args.all, false)?;
@@ -1994,6 +2007,16 @@ fn handle_checkout(
                     target,
                     repo.id.as_str()
                 ))));
+            }
+        }
+        if discard_changes {
+            let status = repo_status(&open.repo)?;
+            if !status.is_clean() {
+                output::warn(&format!(
+                    "discarding uncommitted changes in {}",
+                    repo.id.as_str()
+                ));
+                discard_uncommitted_changes(&open.repo)?;
             }
         }
         checkout_branch(&open.repo, &target)?;

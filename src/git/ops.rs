@@ -227,6 +227,19 @@ pub fn checkout_branch(repo: &gix::Repository, name: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn discard_uncommitted_changes(repo: &gix::Repository) -> Result<()> {
+    run_git_command(
+        repo,
+        &["reset", "--hard", "HEAD"],
+        "discard tracked changes",
+    )?;
+    run_git_command(
+        repo,
+        &["clean", "-ffd"],
+        "discard untracked files and directories",
+    )
+}
+
 pub fn create_and_checkout_branch(repo: &gix::Repository, name: &str) -> Result<()> {
     run_git_command(
         repo,
